@@ -1,5 +1,3 @@
-// © informanerd
-//@version=4
 
 maxLines = 500
 study("Stronger Classical Support/Resistance + Round Levels", "Stronger S/R", true, max_lines_count = maxLines, max_labels_count = maxLines)
