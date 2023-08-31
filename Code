@@ -1,136 +1,199 @@
 
-maxLines = 500
-study("Stronger Classical Support/Resistance + Round Levels", "Stronger S/R", true, max_lines_count = maxLines, max_labels_count = maxLines)
+max = 500
+indicator("Multi-TimeFrame Extremum Points Support/Resistance", "MTF Extrema S/R", true, max_lines_count = max, max_labels_count = max)
 
-// inputs and definitions {
+// definitions {
 
-showRets = input(true, "Show Retracements/Pullbacks Count on S/R Levels")
-extendLine = input("Both Sides", "Extend S/R Lines to", options = ["None", "Left", "Right", "Both Sides"])
-supportColor = input(color.green, "Support Levels Color")
-resistanceColor = input(color.red, "Resistance Levels Color")
-srColor = input(color.blue, "Both S&R Levels Color")
-showRounds = input(true, "Show Forex Round Levels", inline = "Round")
-roundColor = input(color.black, ":", inline = "Round")
+tf = input.timeframe("", "Calculations Time Frame")
 
-color levelColor = na
-int levelBar = na
-int levelType = na
-int levelRepeat = 1
-float levelPrice = na
+srGroup = "=====[ Extremum Support/Resistance Levels ]====="
+highColor = input.color(color.red, "Level Colors → Highests:", inline = "line", group = srGroup)
+lowColor = input.color(color.green, "Lowests:", inline = "line", group = srGroup)
+lineWidth = input.int(2, "Lines Width", 1, inline = "lineWidth", group = srGroup)
+lineStyle = input.string("Solid", "&", ["Dashed", "Dotted", "Solid"], inline = "lineWidth", group = srGroup)
+lineLen = input.int(2, "Lines Length", 1, inline = "lineLen", group = srGroup)
+lineExtend = input.bool(true, "Extend Lines", inline = "lineLen", group = srGroup)
+mergeLevels = input.bool(true, "Merge Nearby Levels →", inline = "merge", group = srGroup)
+mergeColor = input.color(color.blue, "", inline = "merge", group = srGroup)
+len = input.int(15, "                         ATR Length", 2, group = srGroup)
 
-var rounds = array.new_line()
+lblGroup = "=====[ Labels ]====="
+showLabels = input.bool(true, "Show Labels by the Levels", group = lblGroup)
+showPercent = input.bool(true, "Show S/R Percentages of Merged Levels", group = lblGroup)
+showPrice = input.bool(false, "Show Level Prices", group = lblGroup)
+
+linesStyle = lineStyle == "Dashed" ? line.style_dashed : lineStyle == "Dotted" ? line.style_dotted : line.style_solid
+linesExtend = lineExtend ? extend.both : extend.none
+
+var float highPrice = na
+var float highestPrice = na
+var float lowPrice = na
+var float lowestPrice = na
+var highBar = 0
+var highestBar = 0
+var lowBar = 0
+var lowestBar = 0
+var waitingFor = ""
+proximity = request.security("", tf, ta.atr(len / 2) / 2)
+initialTransp = 80
+transpStep = 2
 var levels = array.new_line()
-var prices = array.new_float()
-var types = array.new_int() // support = 1; resistance = 2; both = 3
-var repeats = array.new_int()
-var labels = array.new_label()
-
-proximity = atr(20) / 2
-roundsCount = 4 // an even number
-roundsCount := syminfo.type == "forex" and showRounds ? roundsCount : 0
-minTick = syminfo.mintick
-
-//}
-// find strong high pivots {
-
-pivotHigh() =>
-    wasStrongHigh = false
-    if close < open and close < open[1] and close < open[2]
-        for i = 3 to 9
-            if close[i] == open[i]
-                continue
-            else if close[i] > open[i]
-                wasStrongHigh := true
-                break
-            else
-                break
-    if wasStrongHigh
-        high[2] < high[3] ? bar_index[2] : bar_index[3]
-
-//}
-// find strong low pivots {
-
-pivotLow() =>
-    wasStrongLow = false
-    if close > open and close > open[1] and close > open[2]
-        for i = 3 to 9
-            if close[i] == open[i]
-                continue
-            else if close[i] < open[i]
-                wasStrongLow := true
-                break
-            else
-                break
-    if wasStrongLow
-        low[2] > low[3] ? bar_index[2] : bar_index[3]
-
-//}
-// draw & combine s/r levels {
-
-h = pivotHigh()
-l = pivotLow()
-
-if not na(h)
-    levelBar := h
-    levelType := 2
-    levelPrice := high[bar_index - h]
-    levelColor := resistanceColor
-if not na(l)
-    levelBar := l
-    levelPrice := low[bar_index - l]
-    levelType := 1
-    levelColor := supportColor
-if not (na(h) and na(l))
-    combinedLevels = 0
-    for i = 0 to array.size(levels) - 1
-        j = i - combinedLevels
-        if array.size(levels) <= j
-            break
-        if abs(levelPrice - array.get(prices, j)) < proximity
-            if levelType != array.get(types, j)
-                levelType := 3
-                levelColor := srColor
-            levelRepeat += array.get(repeats, j)
-            line.delete(array.remove(levels, j))
-            array.remove(prices, j)
-            array.remove(types, j)
-            array.remove(repeats, j)
-            label.delete(array.remove(labels, j))
-            combinedLevels += 1
-    array.push(levels, line.new(levelBar, levelPrice, bar_index, levelPrice, extend = extendLine == "None" ? extend.none : extendLine == "Left" ? extend.left : extendLine == "Right" ? extend.right : extend.both, color = color.rgb(color.r(levelColor), color.g(levelColor), color.b(levelColor), 80 - levelRepeat), style = line.style_solid, width = 2))
-    array.push(prices, levelPrice)
-    array.push(types, levelType)
-    array.push(repeats, levelRepeat)
-    array.push(labels, label.new(bar_index, levelPrice, tostring(levelRepeat), xloc.bar_time, color = na, textcolor = showRets ? color.rgb(color.r(levelColor), color.g(levelColor), color.b(levelColor)) : na))
-
-//}
-// delete useless s/r levels {
-
-if array.size(levels) > maxLines - roundsCount
+var levelTypes = array.new_int() // high = 1; low = 2; both = 3
+var highCounts = array.new_int()
+var lowCounts = array.new_int()
+var levelLabels = array.new_label()
+if array.size(levels) == max
     line.delete(array.shift(levels))
-    array.shift(prices)
-    array.shift(types)
-    array.shift(repeats)
-    label.delete(array.shift(labels))
+    array.shift(levelTypes)
+    array.shift(highCounts)
+    array.shift(lowCounts)
+    label.delete(array.shift(levelLabels))
 
 //}
-// relocate counter labels {
+// functions {
 
-if showRets and array.size(labels) > 0
-    for i = 0 to array.size(labels) - 1
-        label.set_x(array.get(labels, i ), time + (time - time[1]) * 5)
+tfPerCtf(tf) =>
+    tfm = timeframe.multiplier
+    s = 0.
+    if timeframe.isminutes
+        s := tfm * 60
+    else if timeframe.isdaily
+        s := tfm * 60 * 60 * 24
+    else if timeframe.isweekly
+        s := tfm * 60 * 60 * 24 * 7
+    else if timeframe.ismonthly
+        s := tfm * 60 * 60 * 24 * 30.4167013889
+    else
+        s := tfm
+    timeframe.in_seconds(tf) / s
+
+ctfBarIndex() =>
+    request.security("", "", bar_index)
+
+isHigh() =>
+    isHigh = false
+    bar = ctfBarIndex()
+    price = high
+    if close < open
+        for i = 1 to 10
+            if close[i] < open[i]
+                break
+            else
+                bar := price < high[i] ? ctfBarIndex() - i : bar
+                price := math.max(price, high[i])
+                if close[i] == open[i]
+                    continue
+                if close[i] > open[i]
+                    isHigh := true
+                    break
+    [isHigh, bar, price]
+isLow() =>
+    isLow = false
+    bar = ctfBarIndex()
+    price = low
+    if close > open
+        for i = 1 to 10
+            if close[i] > open[i]
+                break
+            else
+                bar := price > low[i] ? ctfBarIndex() - i : bar
+                price := math.min(price, low[i])
+                if close[i] == open[i]
+                    continue
+                if close[i] < open[i]
+                    isLow := true
+                    break
+    [isLow, bar, price]
+
+labelText(highs, lows, price) =>
+    sum = highs + lows
+    txt = str.tostring(sum)
+    if showPercent
+        txt += " (↘" + str.tostring(math.round(highs * 100 / sum)) + "%, ↗" + str.tostring(math.round(lows * 100 / sum)) + "%)"
+    if showPrice
+        txt += " @ " + str.tostring(price)
+    txt
 
 //}
-// draw round levels {
+// draw highests and lowests {
 
-if roundsCount > 0
-    if array.size(rounds) > 0
-        for i = 1 to roundsCount
-            line.delete(array.pop(rounds))
-    for i = 0 to (roundsCount / 2) - 1
-        r1 = (floor(close / minTick / 100) - i) * minTick * 100
-        r2 = (ceil(close / minTick / 100) + i) * minTick * 100
-        array.push(rounds, line.new(bar_index[1], r1, bar_index, r1, extend = extend.both, color = roundColor, style = line.style_dashed))
-        array.push(rounds, line.new(bar_index[1], r2, bar_index, r2, extend = extend.both, color = roundColor, style = line.style_dashed))
+linesLen = math.round(lineLen * tfPerCtf(tf))
+newLevel = false
+
+[isH, hBar, hPrice] = request.security("", tf, isHigh())
+if isH
+    if waitingFor != "l" and hPrice < highPrice
+        highestBar := highBar
+        highestPrice := highPrice
+        waitingFor := "l"
+        newLevel := true
+        array.push(levels, line.new(highestBar - linesLen, highestPrice, highestBar + linesLen, highestPrice, extend = linesExtend, color = color.new(highColor, initialTransp - transpStep), style = linesStyle, width = lineWidth))
+        array.push(levelTypes, 1)
+        array.push(highCounts, 1)
+        array.push(lowCounts, 0)
+        array.push(levelLabels, label.new(highestBar, highestPrice, labelText(1, 0, highestPrice), color = na, textcolor = showLabels and mergeLevels ? highColor : na))
+    highBar := hBar
+    highPrice := hPrice
+[isL, lBar, lPrice] = request.security("", tf, isLow())
+if isL
+    if waitingFor != "h" and lPrice > lowPrice
+        lowestBar := lowBar
+        lowestPrice := lowPrice
+        waitingFor := "h"
+        newLevel := true
+        array.push(levels, line.new(lowestBar - linesLen, lowestPrice, lowestBar + linesLen, lowestPrice, extend = linesExtend, color = color.new(lowColor, initialTransp - transpStep), style = linesStyle, width = lineWidth))
+        array.push(levelTypes, 2)
+        array.push(highCounts, 0)
+        array.push(lowCounts, 1)
+        array.push(levelLabels, label.new(lowestBar, lowestPrice, labelText(0, 1, lowestPrice), color = na, textcolor = showLabels and mergeLevels ? lowColor : na))
+    lowBar := lBar
+    lowPrice := lPrice
+
+//}
+// merge nearby levels {
+
+if newLevel and mergeLevels
+    latestLevelPos = array.size(levels) - 1
+    latestLevel = array.get(levels, latestLevelPos)
+    latestLabel = array.get(levelLabels, latestLevelPos)
+    latestLevelType = array.get(levelTypes, latestLevelPos)
+    latestLevelPrice = line.get_y1(latestLevel)
+    deletedLevels = 0
+    for i = 0 to array.size(levels) - 2
+        if i > array.size(levels) - 2
+            break
+        if math.abs(latestLevelPrice - line.get_y1(array.get(levels, i - deletedLevels))) < proximity
+            latestPos = array.size(levelTypes) - 1
+            sumH = array.get(highCounts, latestPos) + array.get(highCounts, i - deletedLevels)
+            sumL = array.get(lowCounts, latestPos) + array.get(lowCounts, i - deletedLevels)
+            label.set_text(latestLabel, labelText(sumH, sumL, latestLevelPrice))
+            transp = initialTransp - (sumH + sumL) * transpStep
+            if latestLevelType != array.get(levelTypes, i - deletedLevels)
+                line.set_color(latestLevel, color.new(mergeColor, transp))
+                array.set(levelTypes, latestPos, 3)
+                array.set(highCounts, latestPos, sumH)
+                array.set(lowCounts, latestPos, sumL)
+                label.set_textcolor(latestLabel, showLabels and mergeLevels ? sumH > sumL and showPercent ? highColor : sumL > sumH and showPercent ? lowColor : mergeColor : na)
+                latestLevelType := 3
+            else
+                if latestLevelType == 1
+                    line.set_color(latestLevel, color.new(highColor, transp))
+                else if latestLevelType == 2
+                    line.set_color(latestLevel, color.new(lowColor, transp))
+                else
+                    line.set_color(latestLevel, color.new(mergeColor, transp))
+            line.delete(array.remove(levels, i - deletedLevels))
+            array.remove(levelTypes, i - deletedLevels)
+            array.remove(highCounts, i - deletedLevels)
+            array.remove(lowCounts, i - deletedLevels)
+            label.delete(array.remove(levelLabels, i - deletedLevels))
+            deletedLevels += 1
+
+//}
+// relocate labels {
+
+if lineExtend
+    for levelLabel in levelLabels
+        label.set_x(levelLabel, bar_index + 8)
 
 //}
